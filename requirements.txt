@@ -1,0 +1,4 @@
+requests>=2.31
+Pillow>=10.1
+# Opcional: narração por voz sintética nos vídeos (precisa de internet)
+# edge-tts>=6.1

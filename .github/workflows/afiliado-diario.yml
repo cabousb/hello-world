@@ -1,0 +1,52 @@
+# Roda todo dia, gera relatório + vídeos e deixa para download na aba "Actions".
+# Configure em Settings > Secrets and variables > Actions:
+#   SHOPEE_APP_ID e SHOPEE_SECRET
+name: Afiliado Shopee diario
+
+on:
+  schedule:
+    - cron: "17 10 * * *"   # 07:17 no horário de Brasília
+  workflow_dispatch:         # botão "Run workflow" para rodar na hora
+
+jobs:
+  gerar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Instalar dependências
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg fonts-dejavu-core
+          pip install -r requirements.txt
+      - name: Restaurar histórico (evita repetir produtos)
+        uses: actions/cache/restore@v4
+        with:
+          path: historico.json
+          key: historico-${{ github.run_id }}
+          restore-keys: historico-
+      - name: Descobrir produtos e gerar vídeos
+        env:
+          SHOPEE_APP_ID: ${{ secrets.SHOPEE_APP_ID }}
+          SHOPEE_SECRET: ${{ secrets.SHOPEE_SECRET }}
+        run: |
+          if [ -z "$SHOPEE_APP_ID" ]; then
+            echo "::warning::Secrets não configurados - rodando em modo demonstração"
+            python -m afiliado --demo --top 5
+          else
+            python -m afiliado --top 5 --link-curto
+          fi
+      - name: Salvar histórico
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: historico.json
+          key: historico-${{ github.run_id }}
+      - name: Publicar vídeos para download
+        uses: actions/upload-artifact@v4
+        with:
+          name: afiliado-${{ github.run_number }}
+          path: saida/
+          retention-days: 7
