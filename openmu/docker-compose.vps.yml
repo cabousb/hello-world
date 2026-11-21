@@ -1,0 +1,38 @@
+# Override para rodar o OpenMU (deploy/all-in-one) numa VPS com segurança.
+# Copie este arquivo para OpenMU/deploy/all-in-one/ e suba com:
+#   docker compose -f docker-compose.yml -f docker-compose.vps.yml up -d --no-build
+#
+# O que ele muda em relação ao docker-compose.yml original:
+# - O PostgreSQL NÃO fica exposto na internet (o original publica a porta 5432
+#   numa porta aleatória em todas as interfaces, e o Docker ignora o UFW).
+# - O painel admin (nginx, porta 80) só escuta em 127.0.0.1. Você acessa por
+#   túnel SSH:  ssh -L 8080:localhost:80 usuario@IP_DA_VPS  -> http://localhost:8080
+# - Só publica os servidores de jogo que existem por padrão (1 a 3) e o chat.
+# - Reinicia os containers sozinho se a VPS reiniciar.
+# Requer Docker Compose 2.24.4 ou mais novo (por causa do "!override" e "!reset").
+
+services:
+  nginx-80:
+    restart: unless-stopped
+    ports: !override
+      - "127.0.0.1:80:80"
+
+  openmu-startup:
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      # IP que o servidor informa ao cliente ao entrar no game server.
+      # "public" descobre o IP público da VPS automaticamente.
+      RESOLVE_IP: ${RESOLVE_IP:-public}
+    ports: !override
+      - "127.0.0.1::8080"
+      - "44405:44405"   # Connect server (cliente original)
+      - "44406:44406"   # Connect server (cliente open source MuMain)
+      - "45901:45901"   # Game server 1
+      - "45902:45902"   # Game server 2
+      - "45903:45903"   # Game server 3
+      - "45980:45980"   # Chat server
+
+  database:
+    restart: unless-stopped
+    ports: !reset []
