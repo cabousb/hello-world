@@ -78,6 +78,10 @@ python -m afiliado --top 5 --link-curto
 5. Depois de 1 a 2 semanas, veja no painel quais *Sub IDs* venderam e ajuste os pesos em
    `afiliado/pontuacao.py`.
 
+## Histórico do projeto
+
+Decisões, passos concluídos e próximos passos: [docs/historico-da-conversa.md](docs/historico-da-conversa.md).
+
 ## Estrutura do código
 
 ```
