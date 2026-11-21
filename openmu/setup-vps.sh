@@ -103,8 +103,8 @@ cat <<MSG
 
 Pronto! Próximos passos:
  1. No SEU computador, abra um túnel para o painel admin:
-      ssh -L 8080:localhost:80 SEU_USUARIO@$IP
-    e acesse http://localhost:8080
+      ssh -L 80:127.0.0.1:80 root@$IP
+    e acesse http://127.0.0.1
  2. No launcher do OpenMU, use o host $IP e a porta 44405.
  3. Ver logs:  cd $INSTALL_DIR/deploy/all-in-one && docker compose logs -f openmu-startup
 MSG

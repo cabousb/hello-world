@@ -59,10 +59,10 @@ e prende o painel em `127.0.0.1`.
 Do **seu computador**:
 
 ```bash
-ssh -L 8080:localhost:80 seu_usuario@IP_DA_VPS
+ssh -L 80:127.0.0.1:80 root@IP_DA_VPS
 ```
 
-Deixe esse terminal aberto e acesse **http://localhost:8080** no navegador. Entre com
+Deixe esse terminal aberto e acesse **http://127.0.0.1** no navegador (a porta local precisa ser 80: o painel redireciona para o login sem a porta). Entre com
 `admin` e a senha que o script mostrou.
 
 O banco é inicializado automaticamente para a **Season 6**. Pela página *Setup* você troca

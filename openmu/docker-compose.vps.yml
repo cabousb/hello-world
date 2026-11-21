@@ -6,7 +6,7 @@
 # - O PostgreSQL NÃO fica exposto na internet (o original publica a porta 5432
 #   numa porta aleatória em todas as interfaces, e o Docker ignora o UFW).
 # - O painel admin (nginx, porta 80) só escuta em 127.0.0.1. Você acessa por
-#   túnel SSH:  ssh -L 8080:localhost:80 usuario@IP_DA_VPS  -> http://localhost:8080
+#   túnel SSH:  ssh -L 80:127.0.0.1:80 root@IP_DA_VPS  -> http://127.0.0.1
 # - Só publica os servidores de jogo que existem por padrão (1 a 3) e o chat.
 # - Reinicia os containers sozinho se a VPS reiniciar.
 # Requer Docker Compose 2.24.4 ou mais novo (por causa do "!override" e "!reset").
