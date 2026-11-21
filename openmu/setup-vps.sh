@@ -12,6 +12,13 @@ if [[ $EUID -ne 0 ]]; then
   exit 1
 fi
 
+VIRT="$(systemd-detect-virt 2>/dev/null || echo desconhecido)"
+echo "==> Virtualização detectada: $VIRT"
+if [[ "$VIRT" == "openvz" ]]; then
+  echo "    OpenVZ/Virtuozzo: swap e alguns recursos de firewall podem não funcionar."
+  echo "    O script segue e avisa o que falhar."
+fi
+
 echo "==> Atualizando pacotes"
 apt-get update -y
 apt-get install -y ca-certificates curl git ufw openssl
@@ -22,21 +29,37 @@ if ! command -v docker >/dev/null 2>&1; then
 fi
 systemctl enable --now docker
 
+echo "==> Testando se o Docker roda containers nesta VPS"
+if ! docker run --rm hello-world >/dev/null 2>&1; then
+  echo "ERRO: o Docker foi instalado mas não consegue rodar containers." >&2
+  echo "Em VPS OpenVZ/Virtuozzo, peça ao suporte para ativar o suporte a Docker" >&2
+  echo "(nesting/cgroups) ou troque para uma VPS KVM." >&2
+  exit 1
+fi
+
 echo "==> Swap de 2 GB (se a VPS não tiver nenhuma)"
-if [[ -z "$(swapon --show)" ]]; then
-  fallocate -l 2G /swapfile
-  chmod 600 /swapfile
-  mkswap /swapfile
-  swapon /swapfile
+if [[ -n "$(swapon --show 2>/dev/null)" ]]; then
+  echo "    Já existe swap, nada a fazer."
+elif [[ "$VIRT" == "openvz" ]]; then
+  echo "    Pulando: em OpenVZ a swap é controlada pelo provedor."
+elif fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile; then
   grep -q '^/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+else
+  echo "    AVISO: não consegui criar swap; seguindo sem ela."
+  rm -f /swapfile
 fi
 
 echo "==> Firewall (UFW)"
-ufw allow OpenSSH
-ufw allow 44405:44406/tcp   # connect servers
-ufw allow 45901:45903/tcp   # game servers
-ufw allow 45980/tcp         # chat server
-ufw --force enable
+if ufw allow OpenSSH \
+  && ufw allow 44405:44406/tcp \
+  && ufw allow 45901:45903/tcp \
+  && ufw allow 45980/tcp \
+  && ufw --force enable; then
+  echo "    UFW ativo: SSH, 44405-44406, 45901-45903 e 45980 liberadas."
+else
+  echo "    AVISO: o UFW não funcionou nesta VPS (comum em OpenVZ)."
+  echo "    O banco e o painel continuam protegidos pelo docker-compose.vps.yml."
+fi
 
 echo "==> Baixando o OpenMU em $INSTALL_DIR"
 if [[ -d "$INSTALL_DIR/.git" ]]; then
