@@ -3,6 +3,7 @@
 Exemplos:
     python -m backtest_forex --fonte sintetico
     python -m backtest_forex --fonte yahoo --par EURUSD --estrategia medias --curta 10 --longa 30
+    python -m backtest_forex --fonte sintetico --stop 50 --alvo 100
     python -m backtest_forex --fonte csv --arquivo meus_dados.csv --estrategia rsi
 """
 
@@ -26,6 +27,8 @@ def criar_parser() -> argparse.ArgumentParser:
     p.add_argument("--spread", type=float, default=1.0, help="Spread em pips")
     p.add_argument("--capital", type=float, default=10_000.0)
     p.add_argument("--alavancagem", type=float, default=1.0)
+    p.add_argument("--stop", type=float, help="Stop loss em pips (ex.: 50)")
+    p.add_argument("--alvo", type=float, help="Take profit em pips (ex.: 100)")
     p.add_argument("--grafico", action="store_true", help="Salva gráfico em resultados/")
     return p
 
@@ -84,9 +87,12 @@ def main(argv=None):
     sinal = obter_sinal(args, df)
     resultado = backtest.executar(df, sinal, spread_pips=args.spread, par=args.par,
                                   capital_inicial=args.capital,
-                                  alavancagem=args.alavancagem)
+                                  alavancagem=args.alavancagem,
+                                  stop_pips=args.stop, alvo_pips=args.alvo)
 
     titulo = f"{args.par} | {args.estrategia} | fonte: {args.fonte}"
+    if args.stop or args.alvo:
+        titulo += f" | stop: {args.stop or '-'} | alvo: {args.alvo or '-'} pips"
     print(f"\n{titulo}")
     print(f"Período: {df.index[0]:%d/%m/%Y} a {df.index[-1]:%d/%m/%Y} ({len(df)} candles)\n")
     print(backtest.formatar_metricas(resultado.metricas))

@@ -49,12 +49,36 @@ Com `--grafico`, o gráfico de patrimônio e quedas é salvo em `resultados/back
 | `rsi`             | Compra com RSI < 30, vende com RSI > 70, sai quando volta a 50          |
 | `comprar_segurar` | Fica comprado o tempo todo (serve de comparação)                        |
 
+### Stop loss e take profit
+
+```bash
+# Stop de 50 pips e alvo de 100 pips (relação risco:retorno de 1:2)
+python -m backtest_forex --par EURUSD --estrategia medias --stop 50 --alvo 100
+```
+
+- `--stop`: fecha a operação se o preço andar X pips **contra** você.
+- `--alvo`: fecha a operação se o preço andar X pips **a seu favor**.
+- Dá para usar só um dos dois.
+
+Regras da simulação (conservadoras de propósito):
+
+- **Gap:** se o candle já abre além do stop, a saída é no preço de abertura.
+  O stop não garante o preço: num gap você perde mais do que planejou.
+- **Stop e alvo no mesmo candle:** com dados diários não dá para saber qual
+  aconteceu primeiro, então o programa assume o pior caso, o stop.
+- **Sem reentrada automática:** depois de um stop ou alvo, a estratégia só volta
+  ao mercado quando o sinal mudar.
+
+Atenção ao tamanho do stop: o EUR/USD costuma variar 50 a 80 pips num dia.
+Um stop de 20 pips em gráfico diário é atingido quase sempre.
+
 ### O que cada métrica significa
 
 - **Retorno total / anual:** quanto o capital cresceu (ou encolheu).
 - **Volatilidade anual:** o quanto o patrimônio oscila. Quanto maior, mais risco.
 - **Índice Sharpe:** retorno dividido pelo risco. Acima de 1 já é considerado bom.
 - **Queda máxima:** a maior perda a partir de um topo. É o "quanto dói" a estratégia.
+- **Saídas no stop loss / take profit:** quantas operações terminaram em cada um.
 - **Taxa de acerto:** porcentagem de operações que deram lucro.
 - **Fator de lucro:** soma dos ganhos ÷ soma das perdas. Abaixo de 1 significa prejuízo.
 
@@ -83,6 +107,6 @@ Para rodar os testes: `python -m pytest`
 ### Ideias para continuar estudando
 
 1. Criar uma estratégia nova em `estrategias.py` (ex.: rompimento de máxima de 20 dias).
-2. Adicionar stop loss e take profit.
+2. Testar várias combinações de `--stop` e `--alvo` e comparar a queda máxima.
 3. Testar a mesma estratégia em vários pares e períodos: se só funciona em um, desconfie.
 4. Separar os dados em "treino" e "teste" para evitar *overfitting*.
