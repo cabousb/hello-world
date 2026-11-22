@@ -69,8 +69,79 @@ def comprar_e_segurar(df: pd.DataFrame) -> pd.Series:
     return pd.Series(1.0, index=df.index)
 
 
+def fibonacci(df: pd.DataFrame, janela: int = 50, zona_inicio: float = 0.5,
+              zona_fim: float = 0.618, nivel_stop: float = 0.786,
+              alvo_extensao: float = 1.0, amplitude_minima_pct: float = 1.0) -> pd.DataFrame:
+    """Retração de Fibonacci: compra correções numa alta, vende repiques numa queda.
+
+    A cada candle, olha os últimos `janela` candles:
+    1. Acha o topo (máxima) e o fundo (mínima) desse período.
+    2. Fundo antes do topo = tendência de ALTA. Topo antes do fundo = BAIXA.
+    3. Calcula as retrações a partir do movimento (amplitude = topo - fundo).
+       Na alta: nível 50% = topo - 0.5 * amplitude, e assim por diante.
+    4. Entrada (na alta): o preço corrigiu até a zona 50%-61,8%, não furou
+       os 78,6% e o candle fechou positivo (fechamento > abertura), acima dos 61,8%.
+       Esse candle de "rejeição" mostra compradores defendendo a zona.
+    5. Stop: no nível 78,6%. Alvo: extensão do movimento a partir do fundo
+       (1.0 = volta ao topo; 1.272 e 1.618 são extensões comuns).
+    Na baixa é tudo espelhado.
+
+    Devolve um DataFrame com sinal, preco_stop e preco_alvo. O motor usa o
+    modo "gatilho": o sinal só abre a operação, que fecha no stop ou no alvo.
+    """
+    if not 0 < zona_inicio < zona_fim < nivel_stop < 1:
+        raise ValueError("Use 0 < zona_inicio < zona_fim < nivel_stop < 1.")
+    if alvo_extensao <= 0:
+        raise ValueError("alvo_extensao precisa ser maior que zero.")
+
+    abertura = df["open"].to_numpy(dtype=float)
+    maxima = df["high"].to_numpy(dtype=float)
+    minima = df["low"].to_numpy(dtype=float)
+    fechamento = df["close"].to_numpy(dtype=float)
+    n = len(df)
+
+    sinal = np.zeros(n)
+    preco_stop = np.full(n, np.nan)
+    preco_alvo = np.full(n, np.nan)
+
+    for t in range(janela - 1, n):
+        inicio = t - janela + 1
+        i_topo = inicio + int(np.argmax(maxima[inicio:t + 1]))
+        i_fundo = inicio + int(np.argmin(minima[inicio:t + 1]))
+        topo, fundo = maxima[i_topo], minima[i_fundo]
+        amplitude = topo - fundo
+        if amplitude <= 0 or amplitude / fundo * 100 < amplitude_minima_pct:
+            continue  # movimento pequeno demais para valer a pena
+
+        if i_fundo < i_topo < t:  # tendência de alta; o topo já ficou para trás
+            zona_alta = topo - zona_inicio * amplitude
+            zona_baixa = topo - zona_fim * amplitude
+            stop = topo - nivel_stop * amplitude
+            menor_desde_topo = minima[i_topo + 1:t + 1].min()
+            if (minima[t] <= zona_alta and menor_desde_topo > stop
+                    and fechamento[t] > abertura[t] and fechamento[t] >= zona_baixa):
+                sinal[t] = 1
+                preco_stop[t] = stop
+                preco_alvo[t] = fundo + alvo_extensao * amplitude
+
+        elif i_topo < i_fundo < t:  # tendência de baixa; o fundo já ficou para trás
+            zona_baixa = fundo + zona_inicio * amplitude
+            zona_alta = fundo + zona_fim * amplitude
+            stop = fundo + nivel_stop * amplitude
+            maior_desde_fundo = maxima[i_fundo + 1:t + 1].max()
+            if (maxima[t] >= zona_baixa and maior_desde_fundo < stop
+                    and fechamento[t] < abertura[t] and fechamento[t] <= zona_alta):
+                sinal[t] = -1
+                preco_stop[t] = stop
+                preco_alvo[t] = topo - alvo_extensao * amplitude
+
+    return pd.DataFrame({"sinal": sinal, "preco_stop": preco_stop,
+                         "preco_alvo": preco_alvo}, index=df.index)
+
+
 ESTRATEGIAS = {
     "medias": cruzamento_medias,
     "rsi": rsi_reversao,
+    "fibonacci": fibonacci,
     "comprar_segurar": comprar_e_segurar,
 }

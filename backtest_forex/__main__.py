@@ -4,6 +4,7 @@ Exemplos:
     python -m backtest_forex --fonte sintetico
     python -m backtest_forex --fonte yahoo --par EURUSD --estrategia medias --curta 10 --longa 30
     python -m backtest_forex --fonte sintetico --stop 50 --alvo 100
+    python -m backtest_forex --fonte sintetico --estrategia fibonacci --fib-alvo 1.272
     python -m backtest_forex --fonte csv --arquivo meus_dados.csv --estrategia rsi
 """
 
@@ -24,6 +25,12 @@ def criar_parser() -> argparse.ArgumentParser:
     p.add_argument("--longa", type=int, default=50, help="Média longa (estratégia medias)")
     p.add_argument("--so-compra", action="store_true", help="Não abre vendas (medias)")
     p.add_argument("--rsi-periodo", type=int, default=14)
+    p.add_argument("--fib-janela", type=int, default=50,
+                   help="Candles usados para achar topo e fundo (fibonacci)")
+    p.add_argument("--fib-alvo", type=float, default=1.0,
+                   help="Alvo como extensão: 1.0 = topo, 1.272, 1.618 (fibonacci)")
+    p.add_argument("--fib-amplitude", type=float, default=1.0,
+                   help="Tamanho mínimo do movimento, em %% (fibonacci)")
     p.add_argument("--spread", type=float, default=1.0, help="Spread em pips")
     p.add_argument("--capital", type=float, default=10_000.0)
     p.add_argument("--alavancagem", type=float, default=1.0)
@@ -49,6 +56,9 @@ def obter_sinal(args, df):
                                              permite_venda=not args.so_compra)
     if args.estrategia == "rsi":
         return estrategias.rsi_reversao(df, args.rsi_periodo)
+    if args.estrategia == "fibonacci":
+        return estrategias.fibonacci(df, janela=args.fib_janela, alvo_extensao=args.fib_alvo,
+                                     amplitude_minima_pct=args.fib_amplitude)
     return estrategias.comprar_e_segurar(df)
 
 
@@ -85,6 +95,9 @@ def main(argv=None):
     args = criar_parser().parse_args(argv)
     df = obter_dados(args)
     sinal = obter_sinal(args, df)
+    if args.estrategia == "fibonacci" and (args.stop or args.alvo):
+        print("Aviso: no Fibonacci, o stop e o alvo vêm dos níveis da estratégia; "
+              "--stop/--alvo são ignorados.")
     resultado = backtest.executar(df, sinal, spread_pips=args.spread, par=args.par,
                                   capital_inicial=args.capital,
                                   alavancagem=args.alavancagem,

@@ -143,3 +143,52 @@ def test_stop_invalido():
     df = dados.gerar_sinteticos(dias=50)
     with pytest.raises(ValueError):
         backtest.executar(df, pd.Series(1.0, index=df.index), stop_pips=-5)
+
+
+def cenario_fibonacci():
+    """Alta de 1.00 a 1.10, correção até 1.05 (50%) e candle de rejeição."""
+    linhas = [(1.00, 1.00, 1.00, 1.00)]
+    for i in range(1, 11):  # sobe 100 pips por dia até 1.10
+        p = 1.00 + i * 0.01
+        linhas.append((p - 0.01, p, p - 0.01, p))
+    linhas += [
+        (1.10, 1.10, 1.08, 1.08),
+        (1.08, 1.08, 1.06, 1.06),
+        (1.06, 1.065, 1.049, 1.062),  # toca 50%, fecha positivo acima de 61,8%
+        (1.062, 1.08, 1.06, 1.078),
+        (1.078, 1.101, 1.075, 1.09),  # atinge o topo (alvo)
+    ]
+    return candles(linhas)
+
+
+def test_fibonacci_gera_compra_na_zona():
+    df = cenario_fibonacci()
+    tabela = estrategias.fibonacci(df, janela=14)
+    t = 13  # candle de rejeição
+    assert tabela["sinal"].iloc[t] == 1
+    assert (tabela["sinal"].drop(df.index[t]) == 0).all()
+    assert tabela["preco_stop"].iloc[t] == pytest.approx(1.10 - 0.786 * 0.10)
+    assert tabela["preco_alvo"].iloc[t] == pytest.approx(1.10)
+
+
+def test_fibonacci_nao_olha_o_futuro():
+    df = dados.gerar_sinteticos(dias=400, semente=7)
+    completo = estrategias.fibonacci(df, janela=30)
+    for t in (100, 200, 399):
+        parcial = estrategias.fibonacci(df.iloc[:t + 1], janela=30)
+        pd.testing.assert_series_equal(parcial["sinal"], completo["sinal"].iloc[:t + 1])
+
+
+def test_modo_gatilho_segura_ate_o_alvo():
+    df = cenario_fibonacci()
+    tabela = estrategias.fibonacci(df, janela=14)
+    res = backtest.executar(df, tabela, spread_pips=0)
+    ops = res.operacoes
+    assert list(ops["motivo"]) == ["alvo"]
+    assert ops["dias"].iloc[0] == 2  # segura mesmo com o sinal voltando a 0
+    assert res.metricas["retorno_total_%"] == pytest.approx((1.10 / 1.062 - 1) * 100)
+
+
+def test_fibonacci_parametros_invalidos():
+    with pytest.raises(ValueError):
+        estrategias.fibonacci(dados.gerar_sinteticos(100), zona_inicio=0.7, zona_fim=0.6)

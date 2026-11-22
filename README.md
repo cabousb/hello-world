@@ -47,6 +47,7 @@ Com `--grafico`, o gráfico de patrimônio e quedas é salvo em `resultados/back
 |-------------------|-------------------------------------------------------------------------|
 | `medias`          | Compra quando a média curta cruza acima da longa; vende quando cruza abaixo |
 | `rsi`             | Compra com RSI < 30, vende com RSI > 70, sai quando volta a 50          |
+| `fibonacci`       | Compra correções de 50%–61,8% numa alta (vende repiques numa baixa), com stop em 78,6% |
 | `comprar_segurar` | Fica comprado o tempo todo (serve de comparação)                        |
 
 ### Stop loss e take profit
@@ -72,6 +73,32 @@ Regras da simulação (conservadoras de propósito):
 Atenção ao tamanho do stop: o EUR/USD costuma variar 50 a 80 pips num dia.
 Um stop de 20 pips em gráfico diário é atingido quase sempre.
 
+### Fibonacci
+
+```bash
+python -m backtest_forex --par EURUSD --estrategia fibonacci
+python -m backtest_forex --par EURUSD --estrategia fibonacci --fib-alvo 1.272 --fib-janela 30
+```
+
+Como a estratégia decide (exemplo numa alta):
+
+1. Nos últimos `--fib-janela` candles (padrão 50), acha o **fundo** e o **topo**.
+   Fundo antes do topo = alta; topo antes do fundo = baixa.
+2. Traça as retrações do movimento: 23,6%, 38,2%, **50%**, **61,8%** e **78,6%**.
+3. **Entrada:** o preço corrige até a zona entre 50% e 61,8%, não fura os 78,6%,
+   e o candle fecha positivo acima dos 61,8% (sinal de que compradores defenderam a zona).
+4. **Stop:** no nível de 78,6%. Se o preço chegar lá, a correção virou reversão.
+5. **Alvo:** `--fib-alvo` vezes o movimento, a partir do fundo. 1.0 = volta ao
+   topo (padrão); 1.272 e 1.618 são as extensões mais usadas.
+
+Diferente das médias, aqui o sinal só **abre** a operação: ela fica aberta até
+bater no stop ou no alvo. Por isso `--stop` e `--alvo` em pips são ignorados.
+Outras opções: `--fib-amplitude` define o tamanho mínimo do movimento, em %
+(padrão 1%), para ignorar oscilações pequenas.
+
+Rodando a mesma estratégia em 5 séries de dados aleatórios, o resultado foi de
+-9% a +12%. Antes de confiar num resultado, teste em vários pares e períodos.
+
 ### O que cada métrica significa
 
 - **Retorno total / anual:** quanto o capital cresceu (ou encolheu).
@@ -96,6 +123,7 @@ Um stop de 20 pips em gráfico diário é atingido quase sempre.
 backtest_forex/
   dados.py        # Yahoo, CSV ou dados sintéticos
   estrategias.py  # geram o sinal: 1 = compra, -1 = venda, 0 = fora
+                  # (o Fibonacci também devolve o preço do stop e do alvo)
   backtest.py     # simulação e métricas
   __main__.py     # linha de comando
 tests/
