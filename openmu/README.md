@@ -138,3 +138,75 @@ Os comandos existentes são bons exemplos, e a documentação está em
       `docker-compose.monitoring.yml`, que usa cerca de 1 GB a mais de RAM).
 - [ ] Lembre que o OpenMU ainda **não tem release estável**. Atualizações podem mudar o
       banco, então faça backup antes de cada `pull`.
+
+## 8. Backup do banco
+
+Tudo do jogo (contas, personagens, itens) fica no PostgreSQL. Sem backup, um erro no
+*Setup* do painel, um disco com problema ou uma atualização ruim apagam tudo.
+
+### Instalar o backup diário
+
+Na VPS, dentro da pasta `hello-world/openmu`:
+
+```bash
+git pull
+sudo bash install-backup.sh
+```
+
+O script instala o `openmu-backup`, agenda a execução **todo dia às 04:00** (horário da VPS) e
+já faz um backup de teste. Os arquivos ficam em `/var/backups/openmu/`:
+
+- `openmu-DATA.sql.gz`: o banco inteiro
+- `openmu-globals-DATA.sql.gz`: os usuários internos do PostgreSQL (necessários para restaurar)
+
+Backups com mais de 14 dias são apagados. O log fica em `/var/log/openmu-backup.log`.
+
+```bash
+openmu-backup                      # backup manual, a qualquer hora
+ls -lh /var/backups/openmu         # ver os backups
+tail /var/log/openmu-backup.log    # ver se o último deu certo
+```
+
+### Copiar para o seu PC (importante)
+
+Backup que está só na VPS se perde junto com ela. De vez em quando, no **PowerShell do seu PC**:
+
+```powershell
+scp "root@151.245.54.18:/var/backups/openmu/*.gz" "C:\Muonline\Backups\"
+```
+
+### Restaurar
+
+Troque `ARQUIVO` pelas datas dos arquivos que você quer usar. Isso **substitui o banco atual**.
+
+```bash
+cd /opt/OpenMU/deploy/all-in-one
+DC="docker compose -f docker-compose.yml -f docker-compose.vps.yml"
+$DC stop openmu-startup
+
+# 1) usuários internos (avisos "role already exists" são normais)
+zcat /var/backups/openmu/openmu-globals-ARQUIVO.sql.gz | docker exec -i database psql -U postgres
+
+# 2) recriar o banco vazio e carregar o backup
+docker exec database psql -U postgres -c "DROP DATABASE IF EXISTS openmu WITH (FORCE)" -c "CREATE DATABASE openmu"
+zcat /var/backups/openmu/openmu-ARQUIVO.sql.gz | docker exec -i database psql -U postgres -d openmu -v ON_ERROR_STOP=1
+
+$DC start openmu-startup
+```
+
+### Testar o backup sem risco
+
+Para ter certeza de que o arquivo funciona, restaure-o num PostgreSQL **temporário**, sem tocar no
+servidor de verdade:
+
+```bash
+docker run -d --name pgtest -e POSTGRES_PASSWORD=teste postgres:18
+sleep 8
+zcat /var/backups/openmu/openmu-globals-ARQUIVO.sql.gz | docker exec -i pgtest psql -U postgres
+docker exec pgtest psql -U postgres -c "CREATE DATABASE openmu"
+zcat /var/backups/openmu/openmu-ARQUIVO.sql.gz | docker exec -i pgtest psql -U postgres -d openmu -v ON_ERROR_STOP=1
+docker exec pgtest psql -U postgres -d openmu -c "SELECT count(*) FROM account.\"Account\""
+docker rm -f pgtest
+```
+
+Se o `SELECT` mostrar um número (as contas), o backup está bom.
