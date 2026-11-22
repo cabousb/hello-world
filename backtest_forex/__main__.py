@@ -1,13 +1,11 @@
 """Linha de comando do backtest.
 
 Exemplos:
+    python -m backtest_forex --par EURUSD
+    python -m backtest_forex --par EURUSD --intervalo 1h --janela 30 --alvo-niveis 2
+    python -m backtest_forex --par GBPUSD --intervalo 4h --otimizar --grafico
     python -m backtest_forex --fonte sintetico
-    python -m backtest_forex --fonte yahoo --par EURUSD --estrategia medias --curta 10 --longa 30
-    python -m backtest_forex --fonte sintetico --stop 50 --alvo 100
-    python -m backtest_forex --fonte sintetico --estrategia fibonacci --fib-alvo 1.272
-    python -m backtest_forex --fonte sintetico --estrategia medias --otimizar --treino 0.7
-    python -m backtest_forex --par EURUSD --intervalo 1h --estrategia medias --otimizar
-    python -m backtest_forex --fonte csv --arquivo meus_dados.csv --estrategia rsi
+    python -m backtest_forex --fonte csv --arquivo meus_dados.csv
 """
 
 import argparse
@@ -24,22 +22,24 @@ def criar_parser() -> argparse.ArgumentParser:
     p.add_argument("--intervalo", choices=dados.INTERVALOS, default="1d",
                    help="Tempo gráfico: 1d, 4h, 1h, 30m, 15m ou 5m (padrão 1d)")
     p.add_argument("--arquivo", help="Caminho do CSV (com --fonte csv)")
-    p.add_argument("--estrategia", choices=list(estrategias.ESTRATEGIAS), default="medias")
-    p.add_argument("--curta", type=int, default=20, help="Média curta (estratégia medias)")
-    p.add_argument("--longa", type=int, default=50, help="Média longa (estratégia medias)")
-    p.add_argument("--so-compra", action="store_true", help="Não abre vendas (medias)")
-    p.add_argument("--rsi-periodo", type=int, default=14)
-    p.add_argument("--fib-janela", type=int, default=50,
-                   help="Candles usados para achar topo e fundo (fibonacci)")
-    p.add_argument("--fib-alvo", type=float, default=1.0,
-                   help="Alvo como extensão: 1.0 = topo, 1.272, 1.618 (fibonacci)")
-    p.add_argument("--fib-amplitude", type=float, default=1.0,
-                   help="Tamanho mínimo do movimento, em %% (fibonacci)")
+    p.add_argument("--estrategia", choices=list(estrategias.ESTRATEGIAS), default="fimathe")
+    p.add_argument("--janela", type=int, default=20,
+                   help="Candles usados para montar o canal de referência (padrão 20)")
+    p.add_argument("--entrada", type=float, default=0.5,
+                   help="Quanto além do canal o preço precisa fechar para entrar (0.5 = 50%%)")
+    p.add_argument("--stop-nivel", type=float, default=-0.5,
+                   help="Stop inicial, em tamanhos de canal a partir da borda (-0.5 = meio do canal)")
+    p.add_argument("--alvo-niveis", type=float,
+                   help="Alvo fixo em tamanhos de canal (ex.: 2). Sem ele, sai só pelo stop móvel")
+    p.add_argument("--sem-stop-movel", action="store_true",
+                   help="Desliga o stop móvel por níveis")
+    p.add_argument("--tamanho-minimo", type=float, default=0.0,
+                   help="Ignora canais menores que X%% do preço")
+    p.add_argument("--tamanho-maximo", type=float,
+                   help="Ignora canais maiores que X%% do preço (stop longe demais)")
     p.add_argument("--spread", type=float, default=1.0, help="Spread em pips")
     p.add_argument("--capital", type=float, default=10_000.0)
     p.add_argument("--alavancagem", type=float, default=1.0)
-    p.add_argument("--stop", type=float, help="Stop loss em pips (ex.: 50)")
-    p.add_argument("--alvo", type=float, help="Take profit em pips (ex.: 100)")
     p.add_argument("--otimizar", action="store_true",
                    help="Escolhe os parâmetros no treino e avalia no teste")
     p.add_argument("--treino", type=float, default=0.7,
@@ -65,16 +65,21 @@ def obter_dados(args):
     return dados.gerar_sinteticos(intervalo=args.intervalo)
 
 
+def parametros_estrategia(args) -> dict:
+    return {"janela": args.janela, "alvo_niveis": args.alvo_niveis}
+
+
+def parametros_fixos(args) -> dict:
+    """Opções que não entram na otimização, mas valem para a estratégia."""
+    return {"entrada": args.entrada, "stop": args.stop_nivel,
+            "stop_movel": not args.sem_stop_movel,
+            "tamanho_minimo_pct": args.tamanho_minimo,
+            "tamanho_maximo_pct": args.tamanho_maximo}
+
+
 def obter_sinal(args, df):
-    if args.estrategia == "medias":
-        return estrategias.cruzamento_medias(df, args.curta, args.longa,
-                                             permite_venda=not args.so_compra)
-    if args.estrategia == "rsi":
-        return estrategias.rsi_reversao(df, args.rsi_periodo)
-    if args.estrategia == "fibonacci":
-        return estrategias.fibonacci(df, janela=args.fib_janela, alvo_extensao=args.fib_alvo,
-                                     amplitude_minima_pct=args.fib_amplitude)
-    return estrategias.comprar_e_segurar(df)
+    funcao = estrategias.ESTRATEGIAS[args.estrategia]
+    return funcao(df, **parametros_estrategia(args), **parametros_fixos(args))
 
 
 def salvar_grafico(resultado, titulo: str) -> Path:
@@ -115,15 +120,6 @@ def formatar_data(data) -> str:
 
 def descrever_periodo(df) -> str:
     return f"{formatar_data(df.index[0])} a {formatar_data(df.index[-1])} ({len(df)} candles)"
-
-
-def parametros_fixos(args) -> dict:
-    """Opções que não entram na otimização, mas valem para a estratégia."""
-    if args.estrategia == "medias":
-        return {"permite_venda": not args.so_compra}
-    if args.estrategia == "fibonacci":
-        return {"amplitude_minima_pct": args.fib_amplitude}
-    return {}
 
 
 def salvar_grafico_treino_teste(resultado, titulo: str) -> Path:
@@ -193,20 +189,17 @@ def main(argv=None):
     args = criar_parser().parse_args(argv)
     df = obter_dados(args)
     opcoes_backtest = {"spread_pips": args.spread, "par": args.par,
-                       "capital_inicial": args.capital, "alavancagem": args.alavancagem,
-                       "stop_pips": args.stop, "alvo_pips": args.alvo}
+                       "capital_inicial": args.capital, "alavancagem": args.alavancagem}
     if args.otimizar:
         executar_otimizacao(args, df, opcoes_backtest)
         return
     sinal = obter_sinal(args, df)
-    if args.estrategia == "fibonacci" and (args.stop or args.alvo):
-        print("Aviso: no Fibonacci, o stop e o alvo vêm dos níveis da estratégia; "
-              "--stop/--alvo são ignorados.")
     resultado = backtest.executar(df, sinal, **opcoes_backtest)
 
     titulo = f"{args.par} {args.intervalo} | {args.estrategia} | fonte: {args.fonte}"
-    if args.stop or args.alvo:
-        titulo += f" | stop: {args.stop or '-'} | alvo: {args.alvo or '-'} pips"
+    titulo += f" | janela {args.janela}"
+    if args.alvo_niveis:
+        titulo += f" | alvo {args.alvo_niveis:g} níveis"
     print(f"\n{titulo}")
     print(f"Período: {descrever_periodo(df)}\n")
     print(backtest.formatar_metricas(resultado.metricas))

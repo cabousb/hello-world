@@ -1,100 +1,68 @@
-"""Estratégias de exemplo.
+"""Estratégia baseada no método Fimathe.
 
-Cada estratégia recebe o DataFrame de preços e devolve uma Série "sinal"
-com valores:
-    1  = comprado (aposta que o preço sobe)
-   -1  = vendido  (aposta que o preço cai)
-    0  = fora do mercado
+Esta é uma INTERPRETAÇÃO simplificada, feita a partir dos conceitos públicos
+do método (canal de referência, zona neutra, níveis projetados pelo tamanho
+do canal e stop movido de nível em nível). As regras exatas do curso podem
+ser diferentes: todos os pontos de decisão são parâmetros, para você ajustar.
 
-O sinal do dia é calculado com o preço de FECHAMENTO daquele dia.
-O motor de backtest só usa esse sinal no dia SEGUINTE, para não "ver o futuro".
+Uma estratégia devolve um DataFrame com:
+    sinal           1 = compra, -1 = venda, 0 = nada
+    preco_stop      stop inicial
+    preco_alvo      alvo fixo (NaN = sem alvo, sai só pelo stop móvel)
+    base_trailing   nível 0, a partir do qual os níveis são contados
+    passo_trailing  distância entre os níveis (o tamanho do canal)
+
+O sinal só ABRE a operação. Quem fecha é o stop (inicial ou móvel) ou o alvo.
+O sinal de um candle é calculado no fechamento dele e executado no seguinte.
 """
 
 import numpy as np
 import pandas as pd
 
 
-def cruzamento_medias(df: pd.DataFrame, curta: int = 20, longa: int = 50,
-                      permite_venda: bool = True) -> pd.Series:
-    """Compra quando a média curta está acima da longa; vende quando está abaixo."""
-    if curta >= longa:
-        raise ValueError("A média curta precisa ser menor que a longa.")
-    media_curta = df["close"].rolling(curta).mean()
-    media_longa = df["close"].rolling(longa).mean()
+def fimathe(df: pd.DataFrame, janela: int = 20, entrada: float = 0.5,
+            stop: float = -0.5, entrada_maxima: float = 1.0, validade: int | None = None,
+            alvo_niveis: float | None = None, tamanho_minimo_pct: float = 0.0,
+            tamanho_maximo_pct: float | None = None,
+            stop_movel: bool = True) -> pd.DataFrame:
+    """Rompimento do canal de referência com projeção de níveis.
 
-    sinal = pd.Series(0, index=df.index, dtype=float)
-    sinal[media_curta > media_longa] = 1
-    sinal[media_curta < media_longa] = -1 if permite_venda else 0
-    sinal[media_longa.isna()] = 0  # sem dados suficientes ainda
-    return sinal
+    Os níveis são medidos em "tamanhos de canal" a partir da borda rompida.
+    Exemplo de COMPRA, com canal de 1.1000 a 1.1050 (tamanho = 50 pips):
 
+        nível 2   1.1150   <- ao chegar aqui, o stop sobe para o nível 1
+        nível 1   1.1100   <- ao chegar aqui, o stop sobe para o nível 0
+        +50%      1.1075   <- entrada: fechamento acima daqui
+        nível 0   1.1050   topo do canal
+        -50%      1.1025   <- stop inicial: meio do canal
+                  1.1000   fundo do canal
 
-def calcular_rsi(close: pd.Series, periodo: int = 14) -> pd.Series:
-    """Índice de Força Relativa (RSI), com a média de Wilder."""
-    variacao = close.diff()
-    ganhos = variacao.clip(lower=0)
-    perdas = -variacao.clip(upper=0)
-    media_ganhos = ganhos.ewm(alpha=1 / periodo, adjust=False, min_periods=periodo).mean()
-    media_perdas = perdas.ewm(alpha=1 / periodo, adjust=False, min_periods=periodo).mean()
-    rs = media_ganhos / media_perdas.replace(0, np.nan)
-    rsi = 100 - 100 / (1 + rs)
-    return rsi.where(media_perdas != 0, 100.0)  # nenhuma perda = RSI 100
-
-
-def rsi_reversao(df: pd.DataFrame, periodo: int = 14, sobrevendido: float = 30,
-                 sobrecomprado: float = 70) -> pd.Series:
-    """Compra quando o RSI cai abaixo de 30 e fica comprado até ele passar de 50.
-    Vende quando passa de 70 e fica vendido até cair abaixo de 50.
+    Regras:
+    1. Canal de referência: máxima e mínima dos `janela` candles anteriores.
+       Quando um candle FECHA fora do canal, o canal congela: topo e fundo
+       ficam fixos e os níveis passam a ser contados a partir dele.
+    2. Zona neutra: dentro do canal e até `entrada` (50%) além dele, não opera.
+       Isso evita entrar em rompimentos falsos.
+    3. Entrada: fechamento além de `entrada` (50%) do canal, mas antes de
+       `entrada_maxima` (100%). Pode acontecer vários candles depois do
+       rompimento. Se o preço pular direto para além de 100%, a entrada está
+       atrasada: o canal é descartado e um novo é montado.
+       O canal congelado também é descartado após `validade` candles
+       (padrão: igual à janela) sem entrada.
+    4. Stop inicial: em `stop` (-0.5 = meio do canal).
+    5. Stop móvel: ao alcançar o nível k, o stop vai para o nível k - 1.
+    6. Alvo opcional: `alvo_niveis` tamanhos de canal além da borda.
+    7. Filtros de tamanho: canais muito pequenos (pouco movimento) ou muito
+       grandes (stop longe demais) são ignorados, em % do preço.
+    Na venda é tudo espelhado, a partir do fundo do canal.
     """
-    rsi = calcular_rsi(df["close"], periodo)
-    sinal = pd.Series(0.0, index=df.index)
-    posicao = 0.0
-    for data, valor in rsi.items():  # laço simples: mais fácil de entender
-        if np.isnan(valor):
-            posicao = 0.0
-        elif posicao == 0 and valor < sobrevendido:
-            posicao = 1.0
-        elif posicao == 0 and valor > sobrecomprado:
-            posicao = -1.0
-        elif posicao == 1 and valor >= 50:
-            posicao = 0.0
-        elif posicao == -1 and valor <= 50:
-            posicao = 0.0
-        sinal[data] = posicao
-    return sinal
+    if janela < 2:
+        raise ValueError("A janela precisa ter pelo menos 2 candles.")
+    if not stop < 0 < entrada < entrada_maxima:
+        raise ValueError("Use stop < 0 < entrada < entrada_maxima.")
+    if alvo_niveis is not None and alvo_niveis <= entrada:
+        raise ValueError("O alvo precisa estar além do nível de entrada.")
 
-
-def comprar_e_segurar(df: pd.DataFrame) -> pd.Series:
-    """Referência: fica comprado o tempo todo."""
-    return pd.Series(1.0, index=df.index)
-
-
-def fibonacci(df: pd.DataFrame, janela: int = 50, zona_inicio: float = 0.5,
-              zona_fim: float = 0.618, nivel_stop: float = 0.786,
-              alvo_extensao: float = 1.0, amplitude_minima_pct: float = 1.0) -> pd.DataFrame:
-    """Retração de Fibonacci: compra correções numa alta, vende repiques numa queda.
-
-    A cada candle, olha os últimos `janela` candles:
-    1. Acha o topo (máxima) e o fundo (mínima) desse período.
-    2. Fundo antes do topo = tendência de ALTA. Topo antes do fundo = BAIXA.
-    3. Calcula as retrações a partir do movimento (amplitude = topo - fundo).
-       Na alta: nível 50% = topo - 0.5 * amplitude, e assim por diante.
-    4. Entrada (na alta): o preço corrigiu até a zona 50%-61,8%, não furou
-       os 78,6% e o candle fechou positivo (fechamento > abertura), acima dos 61,8%.
-       Esse candle de "rejeição" mostra compradores defendendo a zona.
-    5. Stop: no nível 78,6%. Alvo: extensão do movimento a partir do fundo
-       (1.0 = volta ao topo; 1.272 e 1.618 são extensões comuns).
-    Na baixa é tudo espelhado.
-
-    Devolve um DataFrame com sinal, preco_stop e preco_alvo. O motor usa o
-    modo "gatilho": o sinal só abre a operação, que fecha no stop ou no alvo.
-    """
-    if not 0 < zona_inicio < zona_fim < nivel_stop < 1:
-        raise ValueError("Use 0 < zona_inicio < zona_fim < nivel_stop < 1.")
-    if alvo_extensao <= 0:
-        raise ValueError("alvo_extensao precisa ser maior que zero.")
-
-    abertura = df["open"].to_numpy(dtype=float)
     maxima = df["high"].to_numpy(dtype=float)
     minima = df["low"].to_numpy(dtype=float)
     fechamento = df["close"].to_numpy(dtype=float)
@@ -103,45 +71,54 @@ def fibonacci(df: pd.DataFrame, janela: int = 50, zona_inicio: float = 0.5,
     sinal = np.zeros(n)
     preco_stop = np.full(n, np.nan)
     preco_alvo = np.full(n, np.nan)
+    base = np.full(n, np.nan)
+    passo = np.full(n, np.nan)
 
-    for t in range(janela - 1, n):
-        inicio = t - janela + 1
-        i_topo = inicio + int(np.argmax(maxima[inicio:t + 1]))
-        i_fundo = inicio + int(np.argmin(minima[inicio:t + 1]))
-        topo, fundo = maxima[i_topo], minima[i_fundo]
-        amplitude = topo - fundo
-        if amplitude <= 0 or amplitude / fundo * 100 < amplitude_minima_pct:
-            continue  # movimento pequeno demais para valer a pena
+    validade = validade or janela
+    congelado = None  # (topo, fundo, candle em que congelou)
 
-        if i_fundo < i_topo < t:  # tendência de alta; o topo já ficou para trás
-            zona_alta = topo - zona_inicio * amplitude
-            zona_baixa = topo - zona_fim * amplitude
-            stop = topo - nivel_stop * amplitude
-            menor_desde_topo = minima[i_topo + 1:t + 1].min()
-            if (minima[t] <= zona_alta and menor_desde_topo > stop
-                    and fechamento[t] > abertura[t] and fechamento[t] >= zona_baixa):
-                sinal[t] = 1
-                preco_stop[t] = stop
-                preco_alvo[t] = fundo + alvo_extensao * amplitude
+    for t in range(janela, n):
+        c = fechamento[t]
+        if congelado is None:
+            topo = maxima[t - janela:t].max()
+            fundo = minima[t - janela:t].min()
+            if fundo < c < topo:
+                continue  # ainda dentro do canal: zona neutra
+            congelado = (topo, fundo, t)  # rompeu: o canal fica fixo
+        topo, fundo, desde = congelado
+        tamanho = topo - fundo
 
-        elif i_topo < i_fundo < t:  # tendência de baixa; o fundo já ficou para trás
-            zona_baixa = fundo + zona_inicio * amplitude
-            zona_alta = fundo + zona_fim * amplitude
-            stop = fundo + nivel_stop * amplitude
-            maior_desde_fundo = maxima[i_fundo + 1:t + 1].max()
-            if (maxima[t] >= zona_baixa and maior_desde_fundo < stop
-                    and fechamento[t] < abertura[t] and fechamento[t] <= zona_alta):
-                sinal[t] = -1
-                preco_stop[t] = stop
-                preco_alvo[t] = topo - alvo_extensao * amplitude
+        tamanho_pct = tamanho / fundo * 100 if fundo > 0 else 0
+        fora_do_filtro = (tamanho <= 0 or tamanho_pct < tamanho_minimo_pct or
+                          (tamanho_maximo_pct is not None and tamanho_pct > tamanho_maximo_pct))
+        atrasado = (c >= topo + entrada_maxima * tamanho or
+                    c <= fundo - entrada_maxima * tamanho)
+        if fora_do_filtro or atrasado or t - desde >= validade:
+            congelado = None
+            continue
 
-    return pd.DataFrame({"sinal": sinal, "preco_stop": preco_stop,
-                         "preco_alvo": preco_alvo}, index=df.index)
+        if c > topo + entrada * tamanho:
+            sinal[t] = 1
+            base[t] = topo
+            preco_stop[t] = topo + stop * tamanho
+            if alvo_niveis is not None:
+                preco_alvo[t] = topo + alvo_niveis * tamanho
+        elif c < fundo - entrada * tamanho:
+            sinal[t] = -1
+            base[t] = fundo
+            preco_stop[t] = fundo - stop * tamanho
+            if alvo_niveis is not None:
+                preco_alvo[t] = fundo - alvo_niveis * tamanho
+        else:
+            continue  # entre o canal e os 50%: esperando confirmação
+        if stop_movel:
+            passo[t] = tamanho
+        congelado = None  # canal usado; o próximo será montado do zero
+
+    return pd.DataFrame({"sinal": sinal, "preco_stop": preco_stop, "preco_alvo": preco_alvo,
+                         "base_trailing": base, "passo_trailing": passo}, index=df.index)
 
 
 ESTRATEGIAS = {
-    "medias": cruzamento_medias,
-    "rsi": rsi_reversao,
-    "fibonacci": fibonacci,
-    "comprar_segurar": comprar_e_segurar,
+    "fimathe": fimathe,
 }

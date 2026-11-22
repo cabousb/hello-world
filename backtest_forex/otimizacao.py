@@ -19,10 +19,7 @@ from . import backtest, estrategias
 
 # Combinações testadas para cada estratégia.
 GRADES = {
-    "medias": {"curta": [5, 10, 20, 30, 50], "longa": [30, 50, 100, 150, 200]},
-    "rsi": {"periodo": [7, 10, 14, 21, 28]},
-    "fibonacci": {"janela": [20, 30, 50, 80, 120], "alvo_extensao": [1.0, 1.272, 1.618]},
-    "comprar_segurar": {},
+    "fimathe": {"janela": [10, 20, 30, 50, 80], "alvo_niveis": [None, 1.0, 2.0, 3.0]},
 }
 
 CRITERIOS = {"sharpe": "sharpe", "retorno": "retorno_total_%", "fator_lucro": "fator_lucro"}
@@ -51,8 +48,6 @@ def combinacoes(estrategia: str) -> list[dict]:
     grade = GRADES[estrategia]
     nomes = list(grade)
     todas = [dict(zip(nomes, valores)) for valores in product(*grade.values())]
-    if estrategia == "medias":
-        todas = [c for c in todas if c["curta"] < c["longa"]]
     return todas
 
 

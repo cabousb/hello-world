@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from backtest_forex import backtest, dados, estrategias
+from backtest_forex import backtest, dados, estrategias, otimizacao
 
 
 def precos(valores):
@@ -33,9 +33,15 @@ def test_vendido_numa_alta_perde():
     assert res.metricas["retorno_total_%"] == pytest.approx(-10.0)
 
 
+def sinal_alternado(df, periodo=10):
+    """Compra 10 candles, vende 10, e assim por diante (só para testar o motor)."""
+    valores = [1.0 if (i // periodo) % 2 == 0 else -1.0 for i in range(len(df))]
+    return pd.Series(valores, index=df.index)
+
+
 def test_spread_reduz_resultado():
     df = dados.gerar_sinteticos(dias=300)
-    sinal = estrategias.cruzamento_medias(df, 5, 20)
+    sinal = sinal_alternado(df)
     sem = backtest.executar(df, sinal, spread_pips=0).metricas["retorno_total_%"]
     com = backtest.executar(df, sinal, spread_pips=3).metricas["retorno_total_%"]
     assert com < sem
@@ -53,17 +59,6 @@ def test_extrair_operacoes():
     sinal = pd.Series([1, 1, 0, -1, -1, 0], index=df.index, dtype=float)
     ops = backtest.executar(df, sinal, spread_pips=0).operacoes
     assert list(ops["direcao"]) == ["compra", "venda"]
-
-
-def test_rsi_entre_0_e_100():
-    df = dados.gerar_sinteticos(dias=500)
-    rsi = estrategias.calcular_rsi(df["close"]).dropna()
-    assert rsi.between(0, 100).all()
-
-
-def test_medias_invalidas():
-    with pytest.raises(ValueError):
-        estrategias.cruzamento_medias(dados.gerar_sinteticos(100), 50, 20)
 
 
 def test_carregar_csv(tmp_path):
@@ -133,7 +128,7 @@ def test_nao_reentra_apos_stop_enquanto_sinal_nao_muda():
 
 def test_sem_stop_nada_muda():
     df = dados.gerar_sinteticos(dias=300)
-    sinal = estrategias.cruzamento_medias(df, 5, 20)
+    sinal = sinal_alternado(df)
     res = backtest.executar(df, sinal, spread_pips=1)
     assert res.metricas["saidas_stop"] == 0
     assert res.metricas["saidas_alvo"] == 0
@@ -143,58 +138,6 @@ def test_stop_invalido():
     df = dados.gerar_sinteticos(dias=50)
     with pytest.raises(ValueError):
         backtest.executar(df, pd.Series(1.0, index=df.index), stop_pips=-5)
-
-
-def cenario_fibonacci():
-    """Alta de 1.00 a 1.10, correção até 1.05 (50%) e candle de rejeição."""
-    linhas = [(1.00, 1.00, 1.00, 1.00)]
-    for i in range(1, 11):  # sobe 100 pips por dia até 1.10
-        p = 1.00 + i * 0.01
-        linhas.append((p - 0.01, p, p - 0.01, p))
-    linhas += [
-        (1.10, 1.10, 1.08, 1.08),
-        (1.08, 1.08, 1.06, 1.06),
-        (1.06, 1.065, 1.049, 1.062),  # toca 50%, fecha positivo acima de 61,8%
-        (1.062, 1.08, 1.06, 1.078),
-        (1.078, 1.101, 1.075, 1.09),  # atinge o topo (alvo)
-    ]
-    return candles(linhas)
-
-
-def test_fibonacci_gera_compra_na_zona():
-    df = cenario_fibonacci()
-    tabela = estrategias.fibonacci(df, janela=14)
-    t = 13  # candle de rejeição
-    assert tabela["sinal"].iloc[t] == 1
-    assert (tabela["sinal"].drop(df.index[t]) == 0).all()
-    assert tabela["preco_stop"].iloc[t] == pytest.approx(1.10 - 0.786 * 0.10)
-    assert tabela["preco_alvo"].iloc[t] == pytest.approx(1.10)
-
-
-def test_fibonacci_nao_olha_o_futuro():
-    df = dados.gerar_sinteticos(dias=400, semente=7)
-    completo = estrategias.fibonacci(df, janela=30)
-    for t in (100, 200, 399):
-        parcial = estrategias.fibonacci(df.iloc[:t + 1], janela=30)
-        pd.testing.assert_series_equal(parcial["sinal"], completo["sinal"].iloc[:t + 1])
-
-
-def test_modo_gatilho_segura_ate_o_alvo():
-    df = cenario_fibonacci()
-    tabela = estrategias.fibonacci(df, janela=14)
-    res = backtest.executar(df, tabela, spread_pips=0)
-    ops = res.operacoes
-    assert list(ops["motivo"]) == ["alvo"]
-    assert ops["candles"].iloc[0] == 2  # segura mesmo com o sinal voltando a 0
-    assert res.metricas["retorno_total_%"] == pytest.approx((1.10 / 1.062 - 1) * 100)
-
-
-def test_fibonacci_parametros_invalidos():
-    with pytest.raises(ValueError):
-        estrategias.fibonacci(dados.gerar_sinteticos(100), zona_inicio=0.7, zona_fim=0.6)
-
-
-from backtest_forex import otimizacao  # noqa: E402
 
 
 def test_dividir_respeita_a_ordem_do_tempo():
@@ -209,13 +152,9 @@ def test_dividir_invalido():
         otimizacao.dividir(dados.gerar_sinteticos(dias=100), 1.5)
 
 
-def test_combinacoes_de_medias_tem_curta_menor_que_longa():
-    assert all(c["curta"] < c["longa"] for c in otimizacao.combinacoes("medias"))
-
-
 def test_escolha_usa_so_o_treino():
     df = dados.gerar_sinteticos(dias=600, semente=3)
-    res = otimizacao.otimizar(df, "medias", criterio="sharpe")
+    res = otimizacao.otimizar(df, "fimathe", criterio="sharpe")
     validos = res.ranking[res.ranking["valido"]]
     assert res.ranking["sharpe_treino"].iloc[0] == validos["sharpe_treino"].max()
     assert res.treino.metricas["sharpe"] == pytest.approx(res.ranking["sharpe_treino"].iloc[0])
@@ -227,8 +166,8 @@ def test_teste_nao_depende_de_dados_do_futuro_do_treino():
     df = dados.gerar_sinteticos(dias=600, semente=5)
     alterado = df.copy()
     alterado.iloc[420:] *= 1.5
-    a = otimizacao.otimizar(df, "fibonacci")
-    b = otimizacao.otimizar(alterado, "fibonacci")
+    a = otimizacao.otimizar(df, "fimathe")
+    b = otimizacao.otimizar(alterado, "fimathe")
     pd.testing.assert_series_equal(a.ranking["sharpe_treino"], b.ranking["sharpe_treino"])
 
 
@@ -269,5 +208,104 @@ def test_volatilidade_anual_nao_muda_so_por_trocar_o_intervalo():
     # Mesma volatilidade anual nos dois tempos gráficos: a métrica anualizada deve bater.
     for intervalo, n in (("1d", 1000), ("1h", 1000 * 24)):
         df = dados.gerar_sinteticos(dias=n, intervalo=intervalo, semente=1)
-        m = backtest.executar(df, estrategias.comprar_e_segurar(df), spread_pips=0).metricas
+        m = backtest.executar(df, pd.Series(1.0, index=df.index), spread_pips=0).metricas
         assert 5 < m["volatilidade_anual_%"] < 11
+
+
+# ---------- Fimathe ----------
+
+def cenario_fimathe(depois):
+    """Canal de 1.1000 a 1.1050 (50 pips) por 20 candles; depois, os candles dados."""
+    linhas = [(1.1025, 1.1050, 1.1000, 1.1025)] * 20
+    return candles(linhas + depois)
+
+
+def test_fimathe_entra_apos_50_por_cento():
+    df = cenario_fimathe([
+        (1.1025, 1.1060, 1.1020, 1.1055),  # rompe o topo: canal congela
+        (1.1055, 1.1080, 1.1050, 1.1078),  # fecha acima de 1.1075 (+50%): COMPRA
+        (1.1078, 1.1090, 1.1070, 1.1085),
+    ])
+    tabela = estrategias.fimathe(df, janela=20)
+    assert tabela["sinal"].iloc[20] == 0  # só rompeu, ainda na zona neutra
+    assert tabela["sinal"].iloc[21] == 1
+    assert tabela["preco_stop"].iloc[21] == pytest.approx(1.1025)  # meio do canal
+    assert tabela["base_trailing"].iloc[21] == pytest.approx(1.1050)
+    assert tabela["passo_trailing"].iloc[21] == pytest.approx(0.0050)
+
+
+def test_fimathe_venda_espelhada():
+    df = cenario_fimathe([
+        (1.1025, 1.1030, 1.0990, 1.0995),
+        (1.0995, 1.1000, 1.0970, 1.0972),  # abaixo de 1.0975 (-50%): VENDA
+    ])
+    tabela = estrategias.fimathe(df, janela=20)
+    assert tabela["sinal"].iloc[21] == -1
+    assert tabela["preco_stop"].iloc[21] == pytest.approx(1.1025)
+    assert tabela["base_trailing"].iloc[21] == pytest.approx(1.1000)
+
+
+def test_fimathe_nao_entra_atrasado():
+    # Um candle só leva o preço para além de 100% do canal: entrada atrasada.
+    df = cenario_fimathe([(1.1025, 1.1120, 1.1020, 1.1110)])
+    assert (estrategias.fimathe(df, janela=20)["sinal"] == 0).all()
+
+
+def test_fimathe_alvo_em_niveis():
+    df = cenario_fimathe([(1.1025, 1.1060, 1.1020, 1.1055), (1.1055, 1.1080, 1.1050, 1.1078)])
+    tabela = estrategias.fimathe(df, janela=20, alvo_niveis=2)
+    assert tabela["preco_alvo"].iloc[21] == pytest.approx(1.1150)
+
+
+def test_fimathe_nao_olha_o_futuro():
+    df = dados.gerar_sinteticos(dias=400, semente=7)
+    completo = estrategias.fimathe(df, janela=15)
+    for t in (100, 250, 399):
+        parcial = estrategias.fimathe(df.iloc[:t + 1], janela=15)
+        pd.testing.assert_frame_equal(parcial, completo.iloc[:t + 1])
+
+
+def test_fimathe_parametros_invalidos():
+    df = dados.gerar_sinteticos(dias=100)
+    with pytest.raises(ValueError):
+        estrategias.fimathe(df, entrada=1.2, entrada_maxima=1.0)
+    with pytest.raises(ValueError):
+        estrategias.fimathe(df, stop=0.2)
+    with pytest.raises(ValueError):
+        estrategias.fimathe(df, alvo_niveis=0.3)
+
+
+def test_stop_movel_sobe_de_nivel_em_nivel():
+    # Compra a 1.1078 (canal 1.1000-1.1050). O preço chega a 1.1150 (nível 2):
+    # o stop sobe para o nível 1 (1.1100). Depois cai e sai em 1.1100, com lucro.
+    df = cenario_fimathe([
+        (1.1025, 1.1060, 1.1020, 1.1055),
+        (1.1055, 1.1080, 1.1050, 1.1078),  # sinal
+        (1.1078, 1.1110, 1.1075, 1.1105),  # entrada no fechamento anterior; nível 1
+        (1.1105, 1.1155, 1.1100, 1.1150),  # nível 2: stop vai para 1.1100
+        (1.1150, 1.1150, 1.1090, 1.1095),  # cai e toca 1.1100: sai
+    ])
+    res = backtest.executar(df, estrategias.fimathe(df, janela=20), spread_pips=0)
+    ops = res.operacoes
+    assert list(ops["motivo"]) == ["stop móvel"]
+    assert ops["retorno_%"].iloc[0] == pytest.approx((1.1100 / 1.1078 - 1) * 100)
+
+
+def test_stop_movel_nao_anda_para_tras():
+    stop, extremo = backtest.mover_stop(1, 1.1025, 1.1050, 0.005, None, 1.1155, 1.11)
+    assert stop == pytest.approx(1.1100)
+    stop, extremo = backtest.mover_stop(1, stop, 1.1050, 0.005, extremo, 1.1060, 1.10)
+    assert stop == pytest.approx(1.1100)
+
+
+def test_sem_stop_movel_sai_so_no_stop_inicial():
+    df = cenario_fimathe([
+        (1.1025, 1.1060, 1.1020, 1.1055),
+        (1.1055, 1.1080, 1.1050, 1.1078),
+        (1.1078, 1.1110, 1.1075, 1.1105),
+        (1.1105, 1.1155, 1.1100, 1.1150),
+        (1.1150, 1.1150, 1.1090, 1.1095),
+    ])
+    tabela = estrategias.fimathe(df, janela=20, stop_movel=False)
+    res = backtest.executar(df, tabela, spread_pips=0)
+    assert list(res.operacoes["motivo"]) == ["em aberto"]

@@ -66,6 +66,28 @@ def verificar_saida(posicao: float, abertura: float, maxima: float, minima: floa
     return None, None
 
 
+def mover_stop(pos, preco_stop, base, passo, extremo, maxima, minima):
+    """Stop móvel por níveis. Devolve (novo_stop, novo_extremo).
+
+    Comprado: os níveis são base + 1*passo, base + 2*passo...
+    Ao alcançar o nível k, o stop vai para o nível k - 1 (o nível 0 é a base).
+    O stop nunca anda para trás.
+    """
+    if pos > 0:
+        extremo = maxima if extremo is None else max(extremo, maxima)
+        k = int(np.floor((extremo - base) / passo + 1e-9))
+        if k >= 1:
+            novo = base + (k - 1) * passo
+            preco_stop = novo if preco_stop is None else max(preco_stop, novo)
+    else:
+        extremo = minima if extremo is None else min(extremo, minima)
+        k = int(np.floor((base - extremo) / passo + 1e-9))
+        if k >= 1:
+            novo = base - (k - 1) * passo
+            preco_stop = novo if preco_stop is None else min(preco_stop, novo)
+    return preco_stop, extremo
+
+
 def _niveis_validos(pos, entrada, preco_stop, preco_alvo) -> bool:
     """O stop precisa estar do lado da perda e o alvo do lado do ganho."""
     if preco_stop is not None and (preco_stop - entrada) * pos >= 0:
@@ -84,8 +106,11 @@ def executar(df: pd.DataFrame, sinal: pd.Series | pd.DataFrame, spread_pips: flo
     O `sinal` pode ser:
     - Uma Série (1, -1, 0): a posição segue o sinal. Sair do sinal fecha a operação.
     - Um DataFrame com colunas sinal, preco_stop e preco_alvo (modo "gatilho",
-      usado pela estratégia de Fibonacci): o sinal só ABRE a operação, com o
-      stop e o alvo calculados pela estratégia. Ela só fecha no stop ou no alvo.
+      usado pelo Fimathe): o sinal só ABRE a operação, com o stop e o alvo
+      calculados pela estratégia. Ela só fecha no stop ou no alvo.
+      Colunas opcionais base_trailing e passo_trailing ligam o stop móvel por
+      níveis: os níveis ficam em base + k * passo (na venda, base - k * passo).
+      Quando o preço alcança o nível k, o stop sobe para o nível k - 1.
 
     Regras gerais:
     - O sinal de ontem é a posição de hoje, para não usar informação que ainda
@@ -109,6 +134,9 @@ def executar(df: pd.DataFrame, sinal: pd.Series | pd.DataFrame, spread_pips: flo
         sinais = tabela["sinal"].fillna(0).to_numpy(dtype=float)
         stops_estrategia = tabela["preco_stop"].to_numpy(dtype=float)
         alvos_estrategia = tabela["preco_alvo"].to_numpy(dtype=float)
+        sem_trailing = np.full(len(tabela), np.nan)
+        bases_trailing = tabela.get("base_trailing", pd.Series(sem_trailing)).to_numpy(dtype=float)
+        passos_trailing = tabela.get("passo_trailing", pd.Series(sem_trailing)).to_numpy(dtype=float)
     else:
         sinais = sinal.reindex(df.index).fillna(0).to_numpy(dtype=float)
 
@@ -139,6 +167,8 @@ def executar(df: pd.DataFrame, sinal: pd.Series | pd.DataFrame, spread_pips: flo
 
     pos = 0.0
     preco_stop = preco_alvo = None
+    base = passo = extremo = None  # stop móvel por níveis
+    stop_inicial = None
     operacao_atual = 0
     sinal_bloqueado = None  # direção travada após um stop/alvo
 
@@ -165,6 +195,10 @@ def executar(df: pd.DataFrame, sinal: pd.Series | pd.DataFrame, spread_pips: flo
             if desejado != 0:
                 operacao_atual += 1
                 preco_stop, preco_alvo = novo_stop, novo_alvo
+                stop_inicial = preco_stop
+                base = passo = extremo = None
+                if modo_gatilho and passos_trailing[t - 1] > 0:
+                    base, passo = bases_trailing[t - 1], passos_trailing[t - 1]
             pos = desejado
 
         if pos == 0:
@@ -176,9 +210,15 @@ def executar(df: pd.DataFrame, sinal: pd.Series | pd.DataFrame, spread_pips: flo
                                         preco_stop, preco_alvo)
         if saida is None:
             retornos[t] = pos * (fechamento[t] / anterior - 1)
+            if passo is not None:
+                # Atualiza o stop só DEPOIS do candle: vale a partir do próximo.
+                preco_stop, extremo = mover_stop(pos, preco_stop, base, passo, extremo,
+                                                 maxima[t], minima[t])
         else:
             retornos[t] = pos * (saida / anterior - 1)
             custos[t] += abs(pos) * meio_spread / anterior
+            if motivo == "stop" and preco_stop != stop_inicial:
+                motivo = "stop móvel"
             motivos[t] = motivo
             sinal_bloqueado = sinais[t - 1]
             pos = 0.0
@@ -250,6 +290,7 @@ def calcular_metricas(res: pd.DataFrame, operacoes: pd.DataFrame,
         "fator_lucro": (vencedoras["retorno_%"].sum() / soma_perdas
                         if soma_perdas > 0 else float("inf") if n_ops else 0.0),
         "saidas_stop": int((operacoes["motivo"] == "stop").sum()),
+        "saidas_stop_movel": int((operacoes["motivo"] == "stop móvel").sum()),
         "saidas_alvo": int((operacoes["motivo"] == "alvo").sum()),
         "retorno_mercado_%": (res["patrimonio_mercado"].iloc[-1] / capital_inicial - 1) * 100,
     }
@@ -265,7 +306,8 @@ NOMES_METRICAS = {
     "operacoes": "Nº de operações",
     "taxa_acerto_%": "Taxa de acerto (%)",
     "fator_lucro": "Fator de lucro",
-    "saidas_stop": "Saídas no stop loss",
+    "saidas_stop": "Saídas no stop inicial",
+    "saidas_stop_movel": "Saídas no stop móvel",
     "saidas_alvo": "Saídas no take profit",
     "retorno_mercado_%": "Retorno comprar e segurar (%)",
 }
