@@ -6,6 +6,7 @@ Exemplos:
     python -m backtest_forex --fonte sintetico --stop 50 --alvo 100
     python -m backtest_forex --fonte sintetico --estrategia fibonacci --fib-alvo 1.272
     python -m backtest_forex --fonte sintetico --estrategia medias --otimizar --treino 0.7
+    python -m backtest_forex --par EURUSD --intervalo 1h --estrategia medias --otimizar
     python -m backtest_forex --fonte csv --arquivo meus_dados.csv --estrategia rsi
 """
 
@@ -19,7 +20,9 @@ def criar_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Backtest educacional de estratégias de Forex.")
     p.add_argument("--fonte", choices=["yahoo", "csv", "sintetico"], default="yahoo")
     p.add_argument("--par", default="EURUSD", help="Ex.: EURUSD, GBPUSD, USDJPY")
-    p.add_argument("--periodo", default="5y", help="Período no Yahoo (1y, 5y, max...)")
+    p.add_argument("--periodo", default="5y", help="Período no Yahoo (60d, 1y, 5y, max...)")
+    p.add_argument("--intervalo", choices=dados.INTERVALOS, default="1d",
+                   help="Tempo gráfico: 1d, 4h, 1h, 30m, 15m ou 5m (padrão 1d)")
     p.add_argument("--arquivo", help="Caminho do CSV (com --fonte csv)")
     p.add_argument("--estrategia", choices=list(estrategias.ESTRATEGIAS), default="medias")
     p.add_argument("--curta", type=int, default=20, help="Média curta (estratégia medias)")
@@ -49,12 +52,17 @@ def criar_parser() -> argparse.ArgumentParser:
 
 def obter_dados(args):
     if args.fonte == "yahoo":
-        return dados.baixar_yahoo(args.par, args.periodo)
+        _, aviso = dados.ajustar_periodo(args.periodo, args.intervalo)
+        if aviso:
+            print(f"Aviso: {aviso}")
+        return dados.baixar_yahoo(args.par, args.periodo, args.intervalo)
     if args.fonte == "csv":
         if not args.arquivo:
             raise SystemExit("Use --arquivo com --fonte csv.")
+        if args.intervalo != "1d":
+            print("Aviso: com --fonte csv, o tempo gráfico é o do arquivo; --intervalo é ignorado.")
         return dados.carregar_csv(args.arquivo)
-    return dados.gerar_sinteticos()
+    return dados.gerar_sinteticos(intervalo=args.intervalo)
 
 
 def obter_sinal(args, df):
@@ -96,6 +104,17 @@ def salvar_grafico(resultado, titulo: str) -> Path:
     fig.savefig(caminho, dpi=120)
     plt.close(fig)
     return caminho
+
+
+def formatar_data(data) -> str:
+    """Mostra a hora só quando ela importa (gráficos intradiários)."""
+    if data.hour or data.minute:
+        return f"{data:%d/%m/%Y %H:%M}"
+    return f"{data:%d/%m/%Y}"
+
+
+def descrever_periodo(df) -> str:
+    return f"{formatar_data(df.index[0])} a {formatar_data(df.index[-1])} ({len(df)} candles)"
 
 
 def parametros_fixos(args) -> dict:
@@ -147,10 +166,10 @@ def executar_otimizacao(args, df, opcoes_backtest):
         parametros_fixos=parametros_fixos(args), opcoes_backtest=opcoes_backtest)
     treino, teste = resultado.treino.dados, resultado.teste.dados
 
-    titulo = f"{args.par} | {args.estrategia} | treino x teste | fonte: {args.fonte}"
+    titulo = f"{args.par} {args.intervalo} | {args.estrategia} | treino x teste | fonte: {args.fonte}"
     print(f"\n{titulo}")
-    print(f"Treino: {treino.index[0]:%d/%m/%Y} a {treino.index[-1]:%d/%m/%Y} ({len(treino)} candles)")
-    print(f"Teste:  {teste.index[0]:%d/%m/%Y} a {teste.index[-1]:%d/%m/%Y} ({len(teste)} candles)")
+    print(f"Treino: {descrever_periodo(treino)}")
+    print(f"Teste:  {descrever_periodo(teste)}")
 
     ranking = resultado.ranking
     print(f"\nCombinações testadas: {len(ranking)}. As 5 melhores no treino "
@@ -185,11 +204,11 @@ def main(argv=None):
               "--stop/--alvo são ignorados.")
     resultado = backtest.executar(df, sinal, **opcoes_backtest)
 
-    titulo = f"{args.par} | {args.estrategia} | fonte: {args.fonte}"
+    titulo = f"{args.par} {args.intervalo} | {args.estrategia} | fonte: {args.fonte}"
     if args.stop or args.alvo:
         titulo += f" | stop: {args.stop or '-'} | alvo: {args.alvo or '-'} pips"
     print(f"\n{titulo}")
-    print(f"Período: {df.index[0]:%d/%m/%Y} a {df.index[-1]:%d/%m/%Y} ({len(df)} candles)\n")
+    print(f"Período: {descrever_periodo(df)}\n")
     print(backtest.formatar_metricas(resultado.metricas))
 
     if not resultado.operacoes.empty:

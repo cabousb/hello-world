@@ -185,7 +185,7 @@ def test_modo_gatilho_segura_ate_o_alvo():
     res = backtest.executar(df, tabela, spread_pips=0)
     ops = res.operacoes
     assert list(ops["motivo"]) == ["alvo"]
-    assert ops["dias"].iloc[0] == 2  # segura mesmo com o sinal voltando a 0
+    assert ops["candles"].iloc[0] == 2  # segura mesmo com o sinal voltando a 0
     assert res.metricas["retorno_total_%"] == pytest.approx((1.10 / 1.062 - 1) * 100)
 
 
@@ -230,3 +230,44 @@ def test_teste_nao_depende_de_dados_do_futuro_do_treino():
     a = otimizacao.otimizar(df, "fibonacci")
     b = otimizacao.otimizar(alterado, "fibonacci")
     pd.testing.assert_series_equal(a.ranking["sharpe_treino"], b.ranking["sharpe_treino"])
+
+
+def test_ajustar_periodo_respeita_limite_do_yahoo():
+    assert dados.ajustar_periodo("5y", "1h")[0] == "730d"
+    assert dados.ajustar_periodo("1y", "15m")[0] == "60d"
+    assert dados.ajustar_periodo("30d", "15m") == ("30d", None)
+    assert dados.ajustar_periodo("5y", "1d") == ("5y", None)
+    with pytest.raises(ValueError):
+        dados.ajustar_periodo("cinco anos", "1h")
+
+
+def test_reamostrar_1h_para_4h():
+    idx = pd.date_range("2024-01-01 00:00", periods=8, freq="h")
+    df = pd.DataFrame({"open": range(8), "high": [x + 10 for x in range(8)],
+                       "low": [x - 10 for x in range(8)], "close": [x + 0.5 for x in range(8)]},
+                      index=idx, dtype=float)
+    r = dados.reamostrar(df, "4h")
+    assert len(r) == 2
+    assert r.iloc[0].to_dict() == {"open": 0, "high": 13, "low": -10, "close": 3.5}
+
+
+def test_sinteticos_intradiarios_sem_fim_de_semana():
+    df = dados.gerar_sinteticos(dias=500, intervalo="1h")
+    assert len(df) == 500
+    assert (df.index.dayofweek < 5).all()
+    assert (df.index.to_series().diff().dropna().min()) == pd.Timedelta(hours=1)
+
+
+def test_candles_por_ano_se_adapta_ao_intervalo():
+    diario = dados.gerar_sinteticos(dias=520, intervalo="1d")
+    horario = dados.gerar_sinteticos(dias=520 * 24, intervalo="1h")
+    assert 240 < backtest.candles_por_ano(diario.index) < 270
+    assert 5800 < backtest.candles_por_ano(horario.index) < 6500
+
+
+def test_volatilidade_anual_nao_muda_so_por_trocar_o_intervalo():
+    # Mesma volatilidade anual nos dois tempos gráficos: a métrica anualizada deve bater.
+    for intervalo, n in (("1d", 1000), ("1h", 1000 * 24)):
+        df = dados.gerar_sinteticos(dias=n, intervalo=intervalo, semente=1)
+        m = backtest.executar(df, estrategias.comprar_e_segurar(df), spread_pips=0).metricas
+        assert 5 < m["volatilidade_anual_%"] < 11

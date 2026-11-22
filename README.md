@@ -32,6 +32,9 @@ python -m backtest_forex --par USDJPY --estrategia rsi --spread 1.5
 # Seu próprio CSV (colunas: date, open, high, low, close)
 python -m backtest_forex --fonte csv --arquivo meus_dados.csv
 
+# Gráfico de 1 hora
+python -m backtest_forex --par EURUSD --intervalo 1h
+
 # Dados aleatórios, para testar sem internet
 python -m backtest_forex --fonte sintetico
 
@@ -49,6 +52,32 @@ Com `--grafico`, o gráfico de patrimônio e quedas é salvo em `resultados/back
 | `rsi`             | Compra com RSI < 30, vende com RSI > 70, sai quando volta a 50          |
 | `fibonacci`       | Compra correções de 50%–61,8% numa alta (vende repiques numa baixa), com stop em 78,6% |
 | `comprar_segurar` | Fica comprado o tempo todo (serve de comparação)                        |
+
+### Tempo gráfico (`--intervalo`)
+
+```bash
+python -m backtest_forex --par EURUSD --intervalo 1h --estrategia medias
+python -m backtest_forex --par EURUSD --intervalo 4h --estrategia fibonacci --otimizar
+```
+
+| Intervalo | Histórico máximo no Yahoo | Candles por ano (aprox.) |
+|-----------|---------------------------|--------------------------|
+| `1d` (padrão) | vários anos           | 260                      |
+| `4h`      | 730 dias (montado a partir do 1h) | 1.560            |
+| `1h`      | 730 dias                  | 6.200                    |
+| `30m`, `15m`, `5m` | 60 dias          | 12.000 a 75.000          |
+
+- Se o `--periodo` passar do limite, o programa avisa e usa o máximo permitido.
+- Os horários estão em UTC.
+- Os parâmetros contam **candles**, não dias: médias 20/50 no 1h olham as
+  últimas 20 e 50 horas.
+- No Fibonacci em tempos menores, reduza `--fib-amplitude` (ex.: 0.3 no 1h).
+  O padrão de 1% raramente aparece em 50 candles de uma hora.
+- Retorno anual, volatilidade e Sharpe são calculados medindo quantos candles
+  os dados têm por ano, então as métricas valem em qualquer tempo gráfico.
+- Em tempos menores há muito mais operações, e o spread pesa bem mais.
+- Com `--fonte csv`, vale o tempo gráfico do arquivo (ex.: exportado do
+  MetaTrader em H4 ou M15).
 
 ### Stop loss e take profit
 

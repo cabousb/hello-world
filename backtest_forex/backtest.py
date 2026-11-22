@@ -5,7 +5,21 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-DIAS_POR_ANO = 252
+DIAS_POR_ANO = 252  # usado só quando o período é curto demais para medir
+
+
+def candles_por_ano(indice: pd.DatetimeIndex) -> float:
+    """Quantos candles cabem em um ano, medido nos próprios dados.
+
+    Assim as métricas anuais ficam certas em qualquer tempo gráfico:
+    ~260 no diário, ~6.200 no 1h (Forex abre 24h, 5 dias por semana).
+    """
+    if len(indice) < 2:
+        return DIAS_POR_ANO
+    anos = (indice[-1] - indice[0]).total_seconds() / (365.25 * 24 * 3600)
+    if anos < 1 / 52:  # menos de uma semana: estimativa não confiável
+        return DIAS_POR_ANO
+    return (len(indice) - 1) / anos
 
 
 @dataclass
@@ -198,25 +212,26 @@ def extrair_operacoes(res: pd.DataFrame) -> pd.DataFrame:
             "entrada": bloco.index[0],
             "saida": bloco.index[-1],
             "direcao": "compra" if bloco["posicao"].iloc[0] > 0 else "venda",
-            "dias": len(bloco),
+            "candles": len(bloco),
             "motivo": motivo,
             "retorno_%": retorno * 100,
         })
-    return pd.DataFrame(linhas, columns=["entrada", "saida", "direcao", "dias",
+    return pd.DataFrame(linhas, columns=["entrada", "saida", "direcao", "candles",
                                          "motivo", "retorno_%"])
 
 
 def calcular_metricas(res: pd.DataFrame, operacoes: pd.DataFrame,
                       capital_inicial: float) -> dict:
     r = res["retorno_estrategia"]
-    anos = max(len(res) / DIAS_POR_ANO, 1e-9)
+    por_ano = candles_por_ano(res.index)
+    anos = max(len(res) / por_ano, 1e-9)
     final = res["patrimonio"].iloc[-1]
 
     pico = res["patrimonio"].cummax()
     queda = res["patrimonio"] / pico - 1
 
-    vol = r.std() * np.sqrt(DIAS_POR_ANO)
-    sharpe = (r.mean() * DIAS_POR_ANO) / vol if vol > 0 else 0.0
+    vol = r.std() * np.sqrt(por_ano)
+    sharpe = (r.mean() * por_ano) / vol if vol > 0 else 0.0
 
     n_ops = len(operacoes)
     vencedoras = operacoes[operacoes["retorno_%"] > 0]
