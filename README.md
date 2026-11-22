@@ -99,6 +99,43 @@ Outras opções: `--fib-amplitude` define o tamanho mínimo do movimento, em %
 Rodando a mesma estratégia em 5 séries de dados aleatórios, o resultado foi de
 -9% a +12%. Antes de confiar num resultado, teste em vários pares e períodos.
 
+### Treino e teste (otimização de parâmetros)
+
+```bash
+python -m backtest_forex --par EURUSD --estrategia medias --otimizar --grafico
+python -m backtest_forex --par EURUSD --estrategia fibonacci --otimizar --treino 0.6 --criterio fator_lucro
+```
+
+1. Os dados são divididos **em ordem cronológica**: os primeiros 70% são o
+   treino e os últimos 30% são o teste (`--treino` muda a proporção).
+2. O programa testa várias combinações de parâmetros **só no treino** e escolhe
+   a melhor pelo `--criterio` (`sharpe`, `retorno` ou `fator_lucro`).
+3. A combinação escolhida roda no teste, um período que ela nunca viu.
+4. O programa mostra as métricas lado a lado e um diagnóstico.
+
+Combinações testadas (em `otimizacao.py`, no dicionário `GRADES`):
+
+| Estratégia  | Parâmetros                                               |
+|-------------|----------------------------------------------------------|
+| `medias`    | curta: 5, 10, 20, 30, 50 / longa: 30, 50, 100, 150, 200   |
+| `rsi`       | período: 7, 10, 14, 21, 28                               |
+| `fibonacci` | janela: 20, 30, 50, 80, 120 / alvo: 1.0, 1.272, 1.618    |
+
+Como ler o resultado:
+
+- **Bom no treino e ruim no teste:** *overfitting*. Os parâmetros decoraram o
+  passado e não previram nada.
+- **Posição no teste:** se a melhor do treino fica entre as piores no teste,
+  escolher pelo treino não ajudou em nada.
+- **Muitas combinações = mais risco de sorte.** Quanto mais combinações você
+  testa, maior a chance de uma parecer ótima por acaso.
+- **Use o teste uma vez só.** Se você olhar o teste, mudar a estratégia e testar
+  de novo, ele vira treino. O ideal é guardar um período final que você só
+  olha no fim.
+
+Com `--grafico`, a curva de patrimônio do treino e do teste é salva em
+`resultados/treino_teste.png`.
+
 ### O que cada métrica significa
 
 - **Retorno total / anual:** quanto o capital cresceu (ou encolheu).
@@ -125,6 +162,7 @@ backtest_forex/
   estrategias.py  # geram o sinal: 1 = compra, -1 = venda, 0 = fora
                   # (o Fibonacci também devolve o preço do stop e do alvo)
   backtest.py     # simulação e métricas
+  otimizacao.py   # divisão treino/teste e busca de parâmetros
   __main__.py     # linha de comando
 tests/
   test_backtest.py
@@ -137,4 +175,5 @@ Para rodar os testes: `python -m pytest`
 1. Criar uma estratégia nova em `estrategias.py` (ex.: rompimento de máxima de 20 dias).
 2. Testar várias combinações de `--stop` e `--alvo` e comparar a queda máxima.
 3. Testar a mesma estratégia em vários pares e períodos: se só funciona em um, desconfie.
-4. Separar os dados em "treino" e "teste" para evitar *overfitting*.
+4. Implementar *walk-forward*: repetir o treino/teste em várias janelas que
+   avançam no tempo, em vez de um único corte.

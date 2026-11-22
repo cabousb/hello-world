@@ -192,3 +192,41 @@ def test_modo_gatilho_segura_ate_o_alvo():
 def test_fibonacci_parametros_invalidos():
     with pytest.raises(ValueError):
         estrategias.fibonacci(dados.gerar_sinteticos(100), zona_inicio=0.7, zona_fim=0.6)
+
+
+from backtest_forex import otimizacao  # noqa: E402
+
+
+def test_dividir_respeita_a_ordem_do_tempo():
+    df = dados.gerar_sinteticos(dias=100)
+    treino, teste = otimizacao.dividir(df, 0.7)
+    assert len(treino) == 70 and len(teste) == 30
+    assert treino.index.max() < teste.index.min()
+
+
+def test_dividir_invalido():
+    with pytest.raises(ValueError):
+        otimizacao.dividir(dados.gerar_sinteticos(dias=100), 1.5)
+
+
+def test_combinacoes_de_medias_tem_curta_menor_que_longa():
+    assert all(c["curta"] < c["longa"] for c in otimizacao.combinacoes("medias"))
+
+
+def test_escolha_usa_so_o_treino():
+    df = dados.gerar_sinteticos(dias=600, semente=3)
+    res = otimizacao.otimizar(df, "medias", criterio="sharpe")
+    validos = res.ranking[res.ranking["valido"]]
+    assert res.ranking["sharpe_treino"].iloc[0] == validos["sharpe_treino"].max()
+    assert res.treino.metricas["sharpe"] == pytest.approx(res.ranking["sharpe_treino"].iloc[0])
+    assert res.teste.dados.index[0] == res.data_corte
+
+
+def test_teste_nao_depende_de_dados_do_futuro_do_treino():
+    # Alterar os preços do período de teste não pode mudar o resultado do treino.
+    df = dados.gerar_sinteticos(dias=600, semente=5)
+    alterado = df.copy()
+    alterado.iloc[420:] *= 1.5
+    a = otimizacao.otimizar(df, "fibonacci")
+    b = otimizacao.otimizar(alterado, "fibonacci")
+    pd.testing.assert_series_equal(a.ranking["sharpe_treino"], b.ranking["sharpe_treino"])
