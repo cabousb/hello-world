@@ -172,7 +172,7 @@ tail /var/log/openmu-backup.log    # ver se o último deu certo
 Backup que está só na VPS se perde junto com ela. De vez em quando, no **PowerShell do seu PC**:
 
 ```powershell
-scp "root@151.245.54.18:/var/backups/openmu/*.gz" "C:\Muonline\Backups\"
+scp "root@IP_DA_VPS:/var/backups/openmu/*.gz" "C:\Muonline\Backups\"
 ```
 
 ### Restaurar

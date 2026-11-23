@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+# Instala o OpenMU numa VPS Ubuntu/Debian limpa.
+# Uso (na VPS, como root ou com sudo):
+#   sudo bash setup-vps.sh
+set -euo pipefail
+
+INSTALL_DIR="${INSTALL_DIR:-/opt/OpenMU}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [[ $EUID -ne 0 ]]; then
+  echo "Rode com sudo: sudo bash $0" >&2
+  exit 1
+fi
+
+VIRT="$(systemd-detect-virt 2>/dev/null || echo desconhecido)"
+echo "==> Virtualização detectada: $VIRT"
+if [[ "$VIRT" == "openvz" ]]; then
+  echo "    OpenVZ/Virtuozzo: swap e alguns recursos de firewall podem não funcionar."
+  echo "    O script segue e avisa o que falhar."
+fi
+
+echo "==> Atualizando pacotes"
+apt-get update -y
+apt-get install -y ca-certificates curl git ufw openssl
+
+echo "==> Instalando Docker (se ainda não tiver)"
+if ! command -v docker >/dev/null 2>&1; then
+  curl -fsSL https://get.docker.com | sh
+fi
+systemctl enable --now docker
+
+echo "==> Testando se o Docker roda containers nesta VPS"
+if ! docker run --rm hello-world >/dev/null 2>&1; then
+  echo "ERRO: o Docker foi instalado mas não consegue rodar containers." >&2
+  echo "Em VPS OpenVZ/Virtuozzo, peça ao suporte para ativar o suporte a Docker" >&2
+  echo "(nesting/cgroups) ou troque para uma VPS KVM." >&2
+  exit 1
+fi
+
+echo "==> Swap de 2 GB (se a VPS não tiver nenhuma)"
+if [[ -n "$(swapon --show 2>/dev/null)" ]]; then
+  echo "    Já existe swap, nada a fazer."
+elif [[ "$VIRT" == "openvz" ]]; then
+  echo "    Pulando: em OpenVZ a swap é controlada pelo provedor."
+elif fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile; then
+  grep -q '^/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+else
+  echo "    AVISO: não consegui criar swap; seguindo sem ela."
+  rm -f /swapfile
+fi
+
+echo "==> Firewall (UFW)"
+if ufw allow OpenSSH \
+  && ufw allow 44405:44406/tcp \
+  && ufw allow 45901:45903/tcp \
+  && ufw allow 45980/tcp \
+  && ufw --force enable; then
+  echo "    UFW ativo: SSH, 44405-44406, 45901-45903 e 45980 liberadas."
+else
+  echo "    AVISO: o UFW não funcionou nesta VPS (comum em OpenVZ)."
+  echo "    O banco e o painel continuam protegidos pelo docker-compose.vps.yml."
+fi
+
+echo "==> Baixando o OpenMU em $INSTALL_DIR"
+if [[ -d "$INSTALL_DIR/.git" ]]; then
+  git -C "$INSTALL_DIR" pull --ff-only
+else
+  git clone https://github.com/MUnique/OpenMU.git "$INSTALL_DIR"
+fi
+cd "$INSTALL_DIR/deploy/all-in-one"
+
+cp "$SCRIPT_DIR/docker-compose.vps.yml" .
+
+if [[ ! -f .env ]]; then
+  echo "==> Gerando .env com senhas aleatórias"
+  DB_PW="$(openssl rand -hex 24)"
+  ADMIN_PW="$(openssl rand -base64 18 | tr -d '/+=')"
+  cat > .env <<ENV
+DB_HOST=database
+DB_ADMIN_USER=postgres
+DB_ADMIN_PW=$DB_PW
+DB_NAME=openmu
+OPENMU_ADMIN_USER=admin
+OPENMU_ADMIN_PASSWORD=$ADMIN_PW
+OPENMU_ADMIN_TOTP_SECRET=
+RESOLVE_IP=public
+ENV
+  chmod 600 .env
+  echo
+  echo "  Usuário do painel admin: admin"
+  echo "  Senha do painel admin:   $ADMIN_PW"
+  echo "  (também está salva em $INSTALL_DIR/deploy/all-in-one/.env)"
+  echo
+fi
+
+echo "==> Subindo os containers"
+docker compose -f docker-compose.yml -f docker-compose.vps.yml pull
+docker compose -f docker-compose.yml -f docker-compose.vps.yml up -d --no-build
+docker compose -f docker-compose.yml -f docker-compose.vps.yml ps
+
+IP="$(curl -fsS https://api.ipify.org || echo IP_DA_VPS)"
+cat <<MSG
+
+Pronto! Próximos passos:
+ 1. No SEU computador, abra um túnel para o painel admin:
+      ssh -L 80:127.0.0.1:80 root@$IP
+    e acesse http://127.0.0.1
+ 2. No launcher do OpenMU, use o host $IP e a porta 44405.
+ 3. Ver logs:  cd $INSTALL_DIR/deploy/all-in-one && docker compose logs -f openmu-startup
+MSG
