@@ -16,6 +16,8 @@
 | `main.exe` não aparece depois de extrair | O zip do launcher não traz `main.exe`. Se o zip era do cliente, veja o Histórico de proteção do Windows (antivírus) e subpastas. |
 | VS Code não acha `OnlineChatCommandPlugIn.cs` | Pasta errada aberta. O topo do Explorer deve ser `OPENMU`. |
 | Plugin de reset: "não está habilitado" | O plugin vem desativado. Ative em *Plugins*, configure o ⚙ e recarregue os servidores. |
+| Reset volta ao nível 10 com 1500 pontos, mesmo depois de configurar | A configuração não foi gravada: faltou o **Yes** na janela "Change" que abre depois do *Submit*. Reabra o ⚙, confira os valores e recarregue os servidores. |
+| Plugin de reset não aparece em *Plugins* | A lista tem várias páginas. Busque `Reset Feature` (nome) ou `ResetFeaturePlugIn` (tipo). Não confunda com *Stat Reset Feature*. Botão verde *Activate* = desligado; amarelo *Deactivate* = ligado. |
 | Mudança no painel não surtiu efeito | Falta **Reload configuration and restart all game servers** na página *Servers*. |
 | `docker compose` ignorou `ports: !override` | Precisa do Docker Compose 2.24.4+. |
 | Ícone vermelho nos `.gz` no `ls` | É só a cor do Linux para arquivos compactados. |

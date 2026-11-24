@@ -23,6 +23,18 @@ outro plugin (só zera atributos).
 | Points tiers | vazio | Cada entrada: "a partir do reset X, Y pontos por reset" |
 | Move home / Log out | ligados | |
 
+**Na prática (imagem oficial usada na VPS, nov/2026):** a tela do ⚙ mostra *Required level*,
+*Level after reset*, *Required money*, *Multiply required money by reset count*, *Reset base stats to
+class defaults*, *Points per reset*, *Multiply points by reset count*, *Replace level-up points with
+reset total*, *Move home*, *Log out*, *Reset limit*, *Required reset item* e *Item cost tiers*. Com
+*Points per reset* = 300 e as duas caixas de multiplicar/substituir marcadas, o reset N deixa 300 × N
+pontos (sem precisar de *Points tiers*). Configuração testada no jogo: reset do nível 400 para o 1
+com 300 pontos.
+
+**O Submit pede confirmação.** Depois de clicar em *Submit*, o painel abre a janela **"Change"** com o
+antes e o depois em JSON. Sem clicar em **Yes**, nada é gravado e o jogo continua com os padrões
+(nível 10 após o reset, 1500 pontos). Reabra o ⚙ para conferir se salvou.
+
 Comandos de chat: `/reset` e `/resetinfo` (jogadores). `/setresets` e `/getresets` são só de GM e vêm
 **desativados por padrão**: ative na página *Chat commands* para testar faixas sem farmar.
 Existe também um NPC de reset (*Leo the Helper*, plugin `ResetCharacterNpcPlugin`).
@@ -38,7 +50,7 @@ Reset em nível alto com custo crescente, e a **taxa de experiência** controla 
 | Reset limit | 100 (suba depois) |
 | Required level / Level after reset | 400 / 1 |
 | Required money | 1.000.000, multiplicando pelo nº do reset |
-| Points tiers | a partir do reset 1: 300 pontos |
+| Points per reset | 300, com *Multiply points by reset count* e *Replace…* marcados |
 | Experience rate (*General*) | 100–300 médio, 500+ mais leve. Anote o valor antigo antes de mudar. |
 
 Dica de método: escolha quanto tempo um reset deve levar (cerca de 20–30 min no começo, 1–2 h no
